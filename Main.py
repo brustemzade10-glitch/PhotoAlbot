@@ -6,6 +6,7 @@ import requests
 import urllib.parse
 import io
 from telebot import types
+from mtranslate import translate  # Avtomatik tərcümə üçün kitabxana
 
 # 1. RENDER ÜÇÜN VEB SERVER (PORT) AYARI
 app = Flask('')
@@ -26,98 +27,89 @@ bot = telebot.TeleBot(API_TOKEN)
 # 3. ÇOXDİLLİ MESAJ LÜĞƏTİ
 MESSAGES = {
     'az': {
-        'welcome': "Salam! Şəkil yaratmaq üçün ingiliscə təsvir (prompt) göndərin. 🎨",
-        'generating': "Şəkliniz hazırlanır, zəhmət olmasa gözləyin... 🎨",
+        'welcome': "Salam! Şəkil yaratmaq üçün istədiyiniz dildə təsvir (prompt) göndərin. Bot avtomatik tərcümə edəcək! 🎨",
+        'generating': "Mətn tərcümə edilir və şəkil hazırlanır, zəhmət olmasa gözləyin... 🎨",
         'error_api': "AI serverindən cavab alınmadı. Bir az sonra yenidən yoxlayın.",
         'error_gen': "Xəta baş verdi. Yenidən cəhd edin."
     },
     'tr': {
-        'welcome': "Merhaba! Görsel oluşturmak için İngilizce bir açıklama (prompt) gönderin. 🎨",
-        'generating': "Görseliniz hazırlanıyor, lütfen bekleyin... 🎨",
+        'welcome': "Merhaba! Görsel oluşturmak için istediğiniz dilde bir açıklama (prompt) gönderin. Bot otomatik çeviri yapacaktır! 🎨",
+        'generating': "Metin çevriliyor ve görseliniz hazırlanıyor, lütfen bekleyin... 🎨",
         'error_api': "AI sunucusundan yanıt alınamadı. Lütfen biraz sonra tekrar deneyin.",
         'error_gen': "Bir hata oluştu. Lütfen tekrar deneyin."
     },
     'en': {
-        'welcome': "Hello! Send an English description (prompt) to generate an image. 🎨",
-        'generating': "Your image is being generated, please wait... 🎨",
+        'welcome': "Hello! Send a description (prompt) in any language to generate an image. The bot will auto-translate! 🎨",
+        'generating': "Translating text and generating your image, please wait... 🎨",
         'error_api': "No response from AI server. Please try again later.",
         'error_gen': "An error occurred. Please try again."
     },
     'ru': {
-        'welcome': "Привет! Отправьте описание на английском языке для генерации изображения. 🎨",
-        'generating': "Ваше изображение генерируется, пожалуйста, подождите... 🎨",
+        'welcome': "Привет! Отправьте описание на любом языке для генерации изображения. Бот переведет автоматически! 🎨",
+        'generating': "Текст переводится и ваше изображение генерируется, пожалуйста, подождите... 🎨",
         'error_api': "Нет ответа от AI сервера. Пожалуйста, попробуйте позже.",
         'error_gen': "Произошла ошибка. Пожалуйста, попробуйте еще раз."
     }
 }
 
-# İstifadəçilərin dil seçimlərini müvəqqəti saxlamaq üçün lüğət
 user_languages = {}
 
-# 4. /START VƏ /HELP ƏMRLƏRİ (DİL SEÇİM DÜYMƏLƏRİ)
+# 4. /START VƏ /HELP ƏMRLƏRİ
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     chat_id = message.chat.id
-    
     markup = types.InlineKeyboardMarkup(row_width=2)
     btn_az = types.InlineKeyboardButton("🇦🇿 Azərbaycan", callback_data="lang_az")
     btn_tr = types.InlineKeyboardButton("🇹🇷 Türkçe", callback_data="lang_tr")
     btn_en = types.InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")
     btn_ru = types.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")
-    
     markup.add(btn_az, btn_tr, btn_en, btn_ru)
     
-    bot.send_message(
-        chat_id, 
-        "Zəhmət olmasa dil seçin / Lütfen dil seçin / Please choose a language / Пожалуйста, выберите язык:", 
-        reply_markup=markup
-    )
+    bot.send_message(chat_id, "Zəhmət olmasa dil seçin / Lütfen dil seçin / Please choose a language:", reply_markup=markup)
 
-# 5. SEÇİLƏN DİLİN YADDAŞA YAZILMASI
+# 5. DİL SEÇİMİ
 @bot.callback_query_handler(func=lambda call: call.data.startswith('lang_'))
 def handle_language_choice(call):
     chat_id = call.message.chat.id
-    selected_lang = call.data.split('_')[1]  # az, tr, en, ru
-    
+    selected_lang = call.data.split('_')[1]
     user_languages[chat_id] = selected_lang
-    welcome_text = MESSAGES[selected_lang]['welcome']
-    
-    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=welcome_text)
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=MESSAGES[selected_lang]['welcome'])
 
-# 6. SURƏT YARATMA (POLLINATIONS AI INTEGRATION)
+# 6. AVTOMATİK TƏRCÜMƏ VƏ ŞƏKİL YARATMA HİSSƏSİ
 @bot.message_handler(func=lambda message: True)
 def generate_image(message):
     chat_id = message.chat.id
-    prompt = message.text
-    
-    # İstifadəçi dil seçməyibsə standart olaraq 'en' qəbul edilir
+    original_prompt = message.text
     lang = user_languages.get(chat_id, 'en')
     
-    # İstifadəçinin öz dilində "Gözləyin" mesajı verilir
+    # "Gözləyin" mesajını göndəririk
     waiting_msg = bot.reply_to(message, MESSAGES[lang]['generating'])
     
     try:
-        # Mətni təmizləyirik və URL formatına salırıq
-        encoded_prompt = urllib.parse.quote(prompt.strip())
+        # ARXA FONDA AVTOMATİK İNGİLİSCƏYƏ TƏRCÜMƏ EDİRİK
+        # mtranslate yazılan mətni avtomatik tanıyır və 'en' (ingilis) dilinə çevirir
+        english_prompt = translate(original_prompt, 'en')
+        print(f"Orijinal: {original_prompt} -> Tərcümə: {english_prompt}") # Log üçün
+
+        # URL formatına salırıq
+        encoded_prompt = urllib.parse.quote(english_prompt.strip())
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
         
-        # Şəkli internetdən Python yaddaşına yükləyirik
         response = requests.get(image_url, timeout=30)
         
         if response.status_code == 200:
-            # Şəkli bayt (byte) formatında Telegram-a fayl kimi göndəririk
             photo = io.BytesIO(response.content)
             photo.name = 'ai_image.jpg'
             
-            bot.send_photo(chat_id, photo, caption=f"🎬 Prompt: {prompt}")
+            # Şəklin altına həm istifadəçinin yazdığı mətni, həm də ingiliscə variantını qeyd edirik
+            caption_text = f"🎬 Sizin prompt: {original_prompt}\n🇬🇧 İngiliscə (AI): {english_prompt}"
+            bot.send_photo(chat_id, photo, caption=caption_text)
             bot.delete_message(chat_id, waiting_msg.message_id)
         else:
             bot.edit_message_text(MESSAGES[lang]['error_api'], chat_id, waiting_msg.message_id)
             
     except Exception as e:
         print(f"XƏTA: {e}")
-        bot.edit_message_text(f"{MESSAGES[lang]['error_gen']} ({str(e)[:20]})", chat_id, waiting_msg.message_id)
+        bot.edit_message_text(MESSAGES[lang]['error_gen'], chat_id, waiting_msg.message_id)
 
-# Botu işə salırıq
 bot.infinity_polling()
-                                  
