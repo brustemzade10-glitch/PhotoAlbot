@@ -19,7 +19,7 @@ import urllib.parse
 import io
 
 # BotFather-dan aldığın tokeni bura yaz
-API_TOKEN = '8648490903:AAFdxx_iYYNXWw5qQsjgD1iQfCvu8jAeQEU'
+API_TOKEN = '8648490903:AAF8hFJfZwXvevgqapeMKmdUT8aA8Ynic8g'
 bot = telebot.TeleBot(API_TOKEN)
 
 @bot.message_handler(commands=['start', 'help'])
